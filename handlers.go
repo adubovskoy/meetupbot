@@ -10,6 +10,7 @@ import (
 	"github.com/skip2/go-qrcode"
 )
 
+// handleCommand routes commands to corresponding handlers.
 func handleCommand(bot *tgbotapi.BotAPI, db *sql.DB, msg *tgbotapi.Message) {
 	if msg.Command() == "start" && strings.ToLower(msg.CommandArguments()) == "imhere" {
 		handleImhere(bot, db, msg)
@@ -17,7 +18,8 @@ func handleCommand(bot *tgbotapi.BotAPI, db *sql.DB, msg *tgbotapi.Message) {
 	}
 	switch msg.Command() {
 	case "start":
-		sendMessage(bot, msg.Chat.ID, "Добро пожаловать!")
+		sendMessage(bot, msg.Chat.ID, "Добро пожаловать! \nИспользуйте /start для регистрации или дерегистрации на митап."+
+			"\nИспользуйте /state для получения статуса регистрации.")
 		handleNoDialog(bot, db, msg)
 	case "register":
 		handleRegister(bot, db, msg)
@@ -27,17 +29,20 @@ func handleCommand(bot *tgbotapi.BotAPI, db *sql.DB, msg *tgbotapi.Message) {
 		handleQRCode(bot, db, msg)
 	case "addemail":
 		handleAddEmail(bot, db, msg)
+	case "state":
+		handleState(bot, db, msg)
 	default:
 		sendMessage(bot, msg.Chat.ID, "Неизвестная команда")
 	}
 }
 
+// sendMessage sends a text message to the given chat.
 func sendMessage(bot *tgbotapi.BotAPI, chatID int64, text string) {
 	message := tgbotapi.NewMessage(chatID, text)
 	bot.Send(message)
 }
 
-// handleRegister Send register button.
+// handleRegister sends the register button.
 func handleRegister(bot *tgbotapi.BotAPI, db *sql.DB, msg *tgbotapi.Message) {
 	button := tgbotapi.NewInlineKeyboardButtonData("Зарегистрироваться", "register")
 	row := tgbotapi.NewInlineKeyboardRow(button)
@@ -47,7 +52,33 @@ func handleRegister(bot *tgbotapi.BotAPI, db *sql.DB, msg *tgbotapi.Message) {
 	bot.Send(message)
 }
 
-// handleNoDialog handle all events without commands.
+// Provide event state
+func handleState(bot *tgbotapi.BotAPI, db *sql.DB, msg *tgbotapi.Message) {
+	event, err := getLatestEvent(db)
+	if err != nil {
+		sendMessage(bot, msg.Chat.ID, "Ошибка получения информации о событии")
+		return
+	}
+	if event == nil {
+		sendMessage(bot, msg.Chat.ID, "Нет активного события")
+		return
+	}
+	remaining := event.capacity - event.registrationCount
+	sendMessage(bot, msg.Chat.ID, "Осталось мест: "+strconv.Itoa(remaining))
+	// Am I registred?
+	registered, _, err := isUserRegistered(db, msg.From.ID, event.id)
+	if err != nil {
+		sendMessage(bot, msg.Chat.ID, "Ошибка проверки регистрации")
+		return
+	}
+	if registered {
+		sendMessage(bot, msg.Chat.ID, "Вы зарегистрированы")
+	} else {
+		sendMessage(bot, msg.Chat.ID, "Вы не зарегистрированы")
+	}
+}
+
+// handleNoDialog handles all non-command messages.
 func handleNoDialog(bot *tgbotapi.BotAPI, db *sql.DB, msg *tgbotapi.Message) {
 	event, err := getLatestEvent(db)
 	if err != nil {
@@ -80,9 +111,9 @@ func handleNoDialog(bot *tgbotapi.BotAPI, db *sql.DB, msg *tgbotapi.Message) {
 	bot.Send(message)
 }
 
-// handleImhere for "/start imhere" command.
-// If the user is already registered – updates visited = 1.
-// If not – creates a new record with visited = 1 and registred = 0.
+// handleImhere handles the "/start imhere" command.
+// If the user is registered, it updates visited = 1.
+// If not, it creates a new record with visited = 1 and registred = 0.
 func handleImhere(bot *tgbotapi.BotAPI, db *sql.DB, msg *tgbotapi.Message) {
 	event, err := getLatestEvent(db)
 	if err != nil {
@@ -106,7 +137,7 @@ func handleImhere(bot *tgbotapi.BotAPI, db *sql.DB, msg *tgbotapi.Message) {
 		}
 		sendMessage(bot, msg.Chat.ID, "Статус посещения обновлён. Спасибо, что пришли!")
 	} else {
-		// Add new user with visited=1 and registred=0
+		// Add new user with visited = 1 and registred = 0
 		newUser := UserRegistration{
 			TelegramID:       msg.From.ID,
 			Username:         msg.From.UserName,
@@ -126,7 +157,18 @@ func handleImhere(bot *tgbotapi.BotAPI, db *sql.DB, msg *tgbotapi.Message) {
 	}
 }
 
-// handleCallbackQuery inline buttons callback.
+// updateRegistration updates the registration row for an active event.
+func updateRegistration(db *sql.DB, reg UserRegistration) error {
+	stmt, err := db.Prepare("UPDATE users SET username = ?, name = ?, registration_date = ?, email = ?, registred = ? WHERE telegram_id = ? AND event_id = ?")
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	_, err = stmt.Exec(reg.Username, reg.Name, reg.RegistrationDate.Format(time.RFC3339), reg.Email, reg.Registred, reg.TelegramID, reg.EventID)
+	return err
+}
+
+// handleCallbackQuery handles inline button callbacks.
 func handleCallbackQuery(bot *tgbotapi.BotAPI, db *sql.DB, cq *tgbotapi.CallbackQuery) {
 	event, err := getLatestEvent(db)
 	if err != nil {
@@ -139,36 +181,53 @@ func handleCallbackQuery(bot *tgbotapi.BotAPI, db *sql.DB, cq *tgbotapi.Callback
 	}
 
 	if cq.Data == "register" {
-		registered, _, err := isUserRegistered(db, cq.From.ID, event.id)
+		registered, existingReg, err := isUserRegistered(db, cq.From.ID, event.id)
 		if err != nil {
 			sendMessage(bot, cq.Message.Chat.ID, "Ошибка проверки регистрации")
 			return
 		}
-		if registered {
-			remaining := event.capacity - event.registrationCount
-			sendMessage(bot, cq.Message.Chat.ID, "Вы уже зарегистрированы. Осталось мест: "+strconv.Itoa(remaining))
-			return
+		if !registered {
+			// First registration: add new row and update registration count.
+			reg := UserRegistration{
+				TelegramID:       cq.From.ID,
+				Username:         cq.From.UserName,
+				Name:             cq.From.FirstName + " " + cq.From.LastName,
+				RegistrationDate: time.Now(),
+				Email:            "",
+				EventID:          event.id,
+				Registred:        1, // Set to 1 when registered through the button.
+				Visited:          0,
+			}
+			if err := registerUser(db, reg); err != nil {
+				sendMessage(bot, cq.Message.Chat.ID, "Ошибка при регистрации")
+				return
+			}
+			if err := updateEventRegistrationCount(db, event.id); err != nil {
+				sendMessage(bot, cq.Message.Chat.ID, "Ошибка обновления количества регистраций")
+				return
+			}
+			callback := tgbotapi.NewCallback(cq.ID, "Регистрация успешна!")
+			bot.AnswerCallbackQuery(callback)
+		} else {
+			// Registration update: update the existing row.
+			// Note: only active events can be updated.
+			reg := UserRegistration{
+				TelegramID:       cq.From.ID,
+				Username:         cq.From.UserName,
+				Name:             cq.From.FirstName + " " + cq.From.LastName,
+				RegistrationDate: time.Now(), // Update registration date
+				Email:            "",         // Could be updated if needed
+				EventID:          event.id,
+				Registred:        1,
+				Visited:          existingReg.Visited, // Preserve visited status
+			}
+			if err := updateRegistration(db, reg); err != nil {
+				sendMessage(bot, cq.Message.Chat.ID, "Ошибка обновления регистрации")
+				return
+			}
+			callback := tgbotapi.NewCallback(cq.ID, "Регистрация обновлена!")
+			bot.AnswerCallbackQuery(callback)
 		}
-		reg := UserRegistration{
-			TelegramID:       cq.From.ID,
-			Username:         cq.From.UserName,
-			Name:             cq.From.FirstName + " " + cq.From.LastName,
-			RegistrationDate: time.Now(),
-			Email:            "",
-			EventID:          event.id,
-			Registred:        1, // При регистрации через кнопку ставим registred = 1
-			Visited:          0,
-		}
-		if err := registerUser(db, reg); err != nil {
-			sendMessage(bot, cq.Message.Chat.ID, "Ошибка при регистрации")
-			return
-		}
-		if err := updateEventRegistrationCount(db, event.id); err != nil {
-			sendMessage(bot, cq.Message.Chat.ID, "Ошибка обновления количества регистраций")
-			return
-		}
-		callback := tgbotapi.NewCallback(cq.ID, "Регистрация успешна!")
-		bot.AnswerCallbackQuery(callback)
 	} else if cq.Data == "remove" {
 		registered, _, err := isUserRegistered(db, cq.From.ID, event.id)
 		if err != nil {
@@ -201,7 +260,7 @@ func handleCallbackQuery(bot *tgbotapi.BotAPI, db *sql.DB, cq *tgbotapi.Callback
 	sendMessage(bot, cq.Message.Chat.ID, "Осталось мест: "+strconv.Itoa(remaining))
 }
 
-// handleAddEmail TODO: add optional emails
+// handleAddEmail allows the user to optionally add an email to their registration.
 func handleAddEmail(bot *tgbotapi.BotAPI, db *sql.DB, msg *tgbotapi.Message) {
 	args := msg.CommandArguments()
 	if args == "" {
@@ -216,7 +275,8 @@ func handleAddEmail(bot *tgbotapi.BotAPI, db *sql.DB, msg *tgbotapi.Message) {
 	sendMessage(bot, msg.Chat.ID, "Email успешно обновлён!")
 }
 
-// handleAddEvent handle /addevent.
+// handleAddEvent handles the /addevent command.
+// Before inserting the new event, all old active events are marked as "past".
 func handleAddEvent(bot *tgbotapi.BotAPI, db *sql.DB, msg *tgbotapi.Message) {
 	args := msg.CommandArguments()
 	parts := strings.Split(args, ";")
@@ -237,7 +297,20 @@ func handleAddEvent(bot *tgbotapi.BotAPI, db *sql.DB, msg *tgbotapi.Message) {
 		sendMessage(bot, msg.Chat.ID, "Неверный формат даты. Используйте YYYY-MM-DD")
 		return
 	}
-	stmt, err := db.Prepare("INSERT INTO events (name, date, capacity, state) VALUES (?, ?, ?, 'active')")
+
+	// Update all active events to "past" (only for active events)
+	stmt, err := db.Prepare("UPDATE events SET state = 'past' WHERE state = 'active'")
+	if err != nil {
+		sendMessage(bot, msg.Chat.ID, "Ошибка обновления состояния старых событий")
+		return
+	}
+	_, err = stmt.Exec()
+	if err != nil {
+		sendMessage(bot, msg.Chat.ID, "Ошибка обновления состояния старых событий")
+		return
+	}
+
+	stmt, err = db.Prepare("INSERT INTO events (name, date, capacity, state) VALUES (?, ?, ?, 'active')")
 	if err != nil {
 		sendMessage(bot, msg.Chat.ID, "Ошибка подготовки добавления события")
 		return
@@ -250,7 +323,7 @@ func handleAddEvent(bot *tgbotapi.BotAPI, db *sql.DB, msg *tgbotapi.Message) {
 	sendMessage(bot, msg.Chat.ID, "Событие успешно добавлено!")
 }
 
-// handleQRCode handle /qrcode.
+// handleQRCode handles the /qrcode command.
 func handleQRCode(bot *tgbotapi.BotAPI, db *sql.DB, msg *tgbotapi.Message) {
 	args := msg.CommandArguments()
 	if args == "" {
