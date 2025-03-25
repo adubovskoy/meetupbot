@@ -2,7 +2,7 @@ package main
 
 import "time"
 
-// UserRegistration represents a user registration record.
+// UserRegistration представляет запись о регистрации пользователя.
 type UserRegistration struct {
 	TelegramID       int
 	Username         string
@@ -10,9 +10,11 @@ type UserRegistration struct {
 	RegistrationDate time.Time
 	Email            string
 	EventID          int
+	Registred        int // 1, если зарегистрирован (предварительно), 0 — если нет
+	Visited          int // 1, если посетил событие, 0 — если нет
 }
 
-// Event represents an event record.
+// Event представляет запись о событии.
 type Event struct {
 	id                int
 	name              string

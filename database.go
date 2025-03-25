@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// createTables creates the required SQLite tables for users and events.
+// createTables создаёт необходимые таблицы для пользователей и событий.
 func createTables(db *sql.DB) error {
 	userTable := `CREATE TABLE IF NOT EXISTS users (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -14,10 +14,11 @@ func createTables(db *sql.DB) error {
 		name TEXT,
 		registration_date DATETIME,
 		email TEXT,
-		event_id INTEGER
+		event_id INTEGER,
+		registred INTEGER DEFAULT 0,
+		visited INTEGER DEFAULT 0
 	);`
 
-	// Added "state" column (default 'active')
 	eventTable := `CREATE TABLE IF NOT EXISTS events (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		name TEXT,
@@ -36,7 +37,7 @@ func createTables(db *sql.DB) error {
 	return nil
 }
 
-// getLatestEvent returns the most recent active event record.
+// getLatestEvent возвращает последнее активное событие.
 func getLatestEvent(db *sql.DB) (*Event, error) {
 	row := db.QueryRow("SELECT id, name, date, capacity, registration_count FROM events WHERE state = 'active' ORDER BY date DESC LIMIT 1")
 	var ev Event
@@ -52,18 +53,18 @@ func getLatestEvent(db *sql.DB) (*Event, error) {
 	return &ev, nil
 }
 
-// registerUser saves the user's registration details.
+// registerUser сохраняет данные о регистрации пользователя.
 func registerUser(db *sql.DB, reg UserRegistration) error {
-	stmt, err := db.Prepare("INSERT INTO users (telegram_id, username, name, registration_date, email, event_id) VALUES (?, ?, ?, ?, ?, ?)")
+	stmt, err := db.Prepare("INSERT INTO users (telegram_id, username, name, registration_date, email, event_id, registred, visited) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
 	if err != nil {
 		return err
 	}
 	defer stmt.Close()
-	_, err = stmt.Exec(reg.TelegramID, reg.Username, reg.Name, reg.RegistrationDate.Format(time.RFC3339), reg.Email, reg.EventID)
+	_, err = stmt.Exec(reg.TelegramID, reg.Username, reg.Name, reg.RegistrationDate.Format(time.RFC3339), reg.Email, reg.EventID, reg.Registred, reg.Visited)
 	return err
 }
 
-// updateUserEmail updates the email field for a given Telegram user.
+// updateUserEmail обновляет email пользователя.
 func updateUserEmail(db *sql.DB, telegramID int, email string) error {
 	stmt, err := db.Prepare("UPDATE users SET email = ? WHERE telegram_id = ?")
 	if err != nil {
@@ -74,7 +75,7 @@ func updateUserEmail(db *sql.DB, telegramID int, email string) error {
 	return err
 }
 
-// updateEventRegistrationCount increases the registration_count for the event.
+// updateEventRegistrationCount увеличивает количество регистраций для события.
 func updateEventRegistrationCount(db *sql.DB, eventID int) error {
 	stmt, err := db.Prepare("UPDATE events SET registration_count = registration_count + 1 WHERE id = ?")
 	if err != nil {
@@ -85,7 +86,7 @@ func updateEventRegistrationCount(db *sql.DB, eventID int) error {
 	return err
 }
 
-// removeRegistration deletes a user's registration for a given event.
+// removeRegistration удаляет запись регистрации пользователя для события.
 func removeRegistration(db *sql.DB, telegramID int, eventID int) error {
 	stmt, err := db.Prepare("DELETE FROM users WHERE telegram_id = ? AND event_id = ?")
 	if err != nil {
@@ -96,7 +97,7 @@ func removeRegistration(db *sql.DB, telegramID int, eventID int) error {
 	return err
 }
 
-// decrementEventRegistrationCount decrements the registration_count for the event.
+// decrementEventRegistrationCount уменьшает количество регистраций для события.
 func decrementEventRegistrationCount(db *sql.DB, eventID int) error {
 	stmt, err := db.Prepare("UPDATE events SET registration_count = registration_count - 1 WHERE id = ? AND registration_count > 0")
 	if err != nil {
@@ -107,11 +108,11 @@ func decrementEventRegistrationCount(db *sql.DB, eventID int) error {
 	return err
 }
 
-// isUserRegistered checks if a user is already registered for the event.
+// isUserRegistered проверяет, зарегистрирован ли пользователь для события.
 func isUserRegistered(db *sql.DB, telegramID int, eventID int) (bool, *UserRegistration, error) {
-	row := db.QueryRow("SELECT telegram_id, username, name, registration_date, email, event_id FROM users WHERE telegram_id = ? AND event_id = ?", telegramID, eventID)
+	row := db.QueryRow("SELECT telegram_id, username, name, registration_date, email, event_id, registred, visited FROM users WHERE telegram_id = ? AND event_id = ?", telegramID, eventID)
 	var reg UserRegistration
-	err := row.Scan(&reg.TelegramID, &reg.Username, &reg.Name, &reg.RegistrationDate, &reg.Email, &reg.EventID)
+	err := row.Scan(&reg.TelegramID, &reg.Username, &reg.Name, &reg.RegistrationDate, &reg.Email, &reg.EventID, &reg.Registred, &reg.Visited)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return false, nil, nil
@@ -119,4 +120,15 @@ func isUserRegistered(db *sql.DB, telegramID int, eventID int) (bool, *UserRegis
 		return false, nil, err
 	}
 	return true, &reg, nil
+}
+
+// updateVisitedStatus обновляет статус посещения пользователя для события.
+func updateVisitedStatus(db *sql.DB, telegramID int, eventID int, visited int) error {
+	stmt, err := db.Prepare("UPDATE users SET visited = ? WHERE telegram_id = ? AND event_id = ?")
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	_, err = stmt.Exec(visited, telegramID, eventID)
+	return err
 }
