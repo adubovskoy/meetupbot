@@ -1,6 +1,9 @@
 package main
 
 import (
+	"encoding/csv"
+	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -30,9 +33,120 @@ func handleCommand(bot *tgbotapi.BotAPI, db Repository, msg *tgbotapi.Message) {
 		handleAddEmail(bot, db, msg)
 	case "state":
 		handleState(bot, db, msg)
+	case "export":
+		AdminCheckMiddleware(handleExport)(bot, db, msg)
 	default:
 		sendMessage(bot, msg.Chat.ID, "Неизвестная команда")
 	}
+}
+
+// handleExport handles the /export command.
+// Creates a CSV file with all registrations and sends it to the user
+func handleExport(bot *tgbotapi.BotAPI, db Repository, msg *tgbotapi.Message) {
+	registrations, err := db.GetAllRegistrations()
+	if err != nil {
+		sendMessage(bot, msg.Chat.ID, "Ошибка получения данных о регистрациях: "+err.Error())
+		return
+	}
+
+	if len(registrations) == 0 {
+		sendMessage(bot, msg.Chat.ID, "Регистрации отсутствуют")
+		return
+	}
+
+	// Create CSV file
+	filename := "registrations_export_" + time.Now().Format("20060102_150405") + ".csv"
+	file, err := os.Create(filename)
+	if err != nil {
+		sendMessage(bot, msg.Chat.ID, "Ошибка создания файла: "+err.Error())
+		return
+	}
+
+	// Write UTF-8 BOM for better Excel compatibility
+	file.WriteString("\xEF\xBB\xBF")
+
+	// Create CSV writer
+	writer := csv.NewWriter(file)
+
+	// Write header
+	header := []string{
+		"ID Telegram",
+		"Имя пользователя",
+		"Полное имя",
+		"Email",
+		"Дата регистрации",
+		"Событие",
+		"Дата события",
+		"Зарегистрирован",
+		"Посетил",
+	}
+
+	if err := writer.Write(header); err != nil {
+		file.Close()
+		sendMessage(bot, msg.Chat.ID, "Ошибка записи заголовка CSV: "+err.Error())
+		return
+	}
+
+	// Write data
+	for _, reg := range registrations {
+		registeredStr := "Нет"
+		if reg.Registred == 1 {
+			registeredStr = "Да"
+		}
+
+		visitedStr := "Нет"
+		if reg.Visited == 1 {
+			visitedStr = "Да"
+		}
+
+		row := []string{
+			strconv.Itoa(reg.TelegramID),
+			reg.Username,
+			reg.Name,
+			reg.Email,
+			reg.RegistrationDate.Format("02.01.2006 15:04"),
+			reg.EventName,
+			reg.EventDate.Format("02.01.2006"),
+			registeredStr,
+			visitedStr,
+		}
+
+		if err := writer.Write(row); err != nil {
+			file.Close()
+			sendMessage(bot, msg.Chat.ID, "Ошибка записи данных в CSV: "+err.Error())
+			return
+		}
+	}
+
+	// Flush the writer to ensure all data is written to the file
+	writer.Flush()
+
+	// Close the file before sending
+	file.Close()
+
+	// Send the file to the user
+	fileBytes, err := os.ReadFile(filename)
+	if err != nil {
+		sendMessage(bot, msg.Chat.ID, "Ошибка чтения файла: "+err.Error())
+		return
+	}
+
+	fileDoc := tgbotapi.FileBytes{
+		Name:  filename,
+		Bytes: fileBytes,
+	}
+
+	doc := tgbotapi.NewDocumentUpload(msg.Chat.ID, fileDoc)
+	doc.Caption = fmt.Sprintf("Экспорт данных регистраций (%d записей)", len(registrations))
+
+	_, err = bot.Send(doc)
+	if err != nil {
+		sendMessage(bot, msg.Chat.ID, "Ошибка отправки файла: "+err.Error())
+		return
+	}
+
+	// Clean up the file after sending
+	os.Remove(filename)
 }
 
 // sendMessage sends a text message to the given chat.

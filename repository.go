@@ -19,6 +19,7 @@ type Repository interface {
 	UpdateRegistration(reg UserRegistration) error
 	MarkEventsAsPast() error
 	AddEvent(name string, date time.Time, capacity int) error
+	GetAllRegistrations() ([]UserRegistrationWithEvent, error)
 	// Add method for SQL statement preparation
 	Prepare(query string) (*sql.Stmt, error)
 	Exec(query string, args ...interface{}) (sql.Result, error)
@@ -205,4 +206,67 @@ func (r *SQLiteRepository) Prepare(query string) (*sql.Stmt, error) {
 // Exec forwards the exec statement to the underlying database
 func (r *SQLiteRepository) Exec(query string, args ...interface{}) (sql.Result, error) {
 	return r.db.Exec(query, args...)
+}
+
+// GetAllRegistrations retrieves all user registrations with event details
+func (r *SQLiteRepository) GetAllRegistrations() ([]UserRegistrationWithEvent, error) {
+	query := `
+        SELECT u.telegram_id, u.username, u.name, u.registration_date, u.email, u.event_id, u.registred, u.visited,
+               e.name, e.date
+        FROM users u
+        JOIN events e ON u.event_id = e.id
+        ORDER BY e.date DESC, u.name ASC
+    `
+
+	rows, err := r.db.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var registrations []UserRegistrationWithEvent
+
+	for rows.Next() {
+		var reg UserRegistrationWithEvent
+		var regDateStr string
+		var eventDateStr, eventName sql.NullString
+		
+		err := rows.Scan(
+			&reg.TelegramID,
+			&reg.Username,
+			&reg.Name,
+			&regDateStr,
+			&reg.Email,
+			&reg.EventID,
+			&reg.Registred,
+			&reg.Visited,
+			&eventName,
+			&eventDateStr,
+		)
+		if err != nil {
+			return nil, err
+		}
+		
+		reg.RegistrationDate, _ = time.Parse(time.RFC3339, regDateStr)
+		
+		if eventName.Valid {
+			reg.EventName = eventName.String
+		} else {
+			reg.EventName = "Unknown Event"
+		}
+		
+		if eventDateStr.Valid {
+			reg.EventDate, _ = time.Parse(time.RFC3339, eventDateStr.String)
+		} else {
+			reg.EventDate = time.Time{} // Zero time
+		}
+
+		registrations = append(registrations, reg)
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return registrations, nil
 }

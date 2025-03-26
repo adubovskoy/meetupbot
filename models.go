@@ -22,3 +22,10 @@ type Event struct {
 	capacity          int       // capacity is the maximum number of participants allowed.
 	registrationCount int       // registrationCount is the number of participants registered for the event.
 }
+
+// UserRegistrationWithEvent extends UserRegistration with event information
+type UserRegistrationWithEvent struct {
+	UserRegistration           // Embedded UserRegistration
+	EventName        string    // Name of the event
+	EventDate        time.Time // Date of the event
+}
