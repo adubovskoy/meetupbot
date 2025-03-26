@@ -55,7 +55,10 @@ func main() {
 	}
 	defer db.Close()
 
-	if err := createTables(db); err != nil {
+	// Initialize repository
+	repo := NewSQLiteRepository(db)
+
+	if err := repo.CreateTables(); err != nil {
 		log.Fatal(err)
 	}
 
@@ -68,15 +71,15 @@ func main() {
 
 	for update := range updates {
 		if update.CallbackQuery != nil {
-			handleCallbackQuery(bot, db, update.CallbackQuery)
+			handleCallbackQuery(bot, repo, update.CallbackQuery)
 			continue
 		}
 		if update.Message != nil {
 			if update.Message.IsCommand() {
-				handleCommand(bot, db, update.Message)
+				handleCommand(bot, repo, update.Message)
 			} else {
 				// New dialog mode: show appropriate button based on registration status
-				handleNoDialog(bot, db, update.Message)
+				handleNoDialog(bot, repo, update.Message)
 			}
 		}
 	}
