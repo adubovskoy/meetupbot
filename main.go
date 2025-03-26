@@ -4,15 +4,42 @@ import (
 	"database/sql"
 	"log"
 	"os"
+	"strings"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api"
 	_ "github.com/mattn/go-sqlite3"
 )
 
+// AdminUsers is a global variable that holds the list of admin usernames
+var AdminUsers []string
+
+// IsAdmin checks if a username is in the list of admin users
+func IsAdmin(username string) bool {
+	for _, admin := range AdminUsers {
+		if admin == username {
+			return true
+		}
+	}
+	return false
+}
+
 func main() {
 	botToken := os.Getenv("BOT_TOKEN")
 	if botToken == "" {
 		log.Fatal("BOT_TOKEN environment variable is required")
+	}
+	
+	// Initialize admin users from environment variable
+	adminUsersEnv := os.Getenv("ADMIN_USERS")
+	if adminUsersEnv != "" {
+		AdminUsers = strings.Split(adminUsersEnv, ",")
+		// Trim spaces from usernames
+		for i, username := range AdminUsers {
+			AdminUsers[i] = strings.TrimSpace(username)
+		}
+		log.Printf("Admin users: %v", AdminUsers)
+	} else {
+		log.Println("Warning: ADMIN_USERS environment variable not set. No users will have admin privileges.")
 	}
 
 	bot, err := tgbotapi.NewBotAPI(botToken)

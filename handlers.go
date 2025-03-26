@@ -24,9 +24,17 @@ func handleCommand(bot *tgbotapi.BotAPI, db *sql.DB, msg *tgbotapi.Message) {
 	case "register":
 		handleRegister(bot, db, msg)
 	case "addevent":
-		handleAddEvent(bot, db, msg)
+		if IsAdmin(msg.From.UserName) {
+			handleAddEvent(bot, db, msg)
+		} else {
+			sendMessage(bot, msg.Chat.ID, "У вас нет прав для выполнения этой команды. Только администраторы могут добавлять события.")
+		}
 	case "qrcode":
-		handleQRCode(bot, db, msg)
+		if IsAdmin(msg.From.UserName) {
+			handleQRCode(bot, db, msg)
+		} else {
+			sendMessage(bot, msg.Chat.ID, "У вас нет прав для выполнения этой команды. Только администраторы могут генерировать QR-коды.")
+		}
 	case "addemail":
 		handleAddEmail(bot, db, msg)
 	case "state":
