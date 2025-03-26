@@ -4,7 +4,6 @@ import tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api"
 
 // Middleware functions types
 type CommandHandlerFunc func(bot *tgbotapi.BotAPI, db Repository, msg *tgbotapi.Message)
-type CallbackHandlerFunc func(bot *tgbotapi.BotAPI, db Repository, query *tgbotapi.CallbackQuery)
 
 // Helper function to avoid circular imports
 func sendAdminDeniedMessage(bot *tgbotapi.BotAPI, chatID int64) {

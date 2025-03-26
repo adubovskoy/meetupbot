@@ -414,24 +414,16 @@ func handleAddEvent(bot *tgbotapi.BotAPI, db Repository, msg *tgbotapi.Message) 
 }
 
 // handleQRCode handles the /qrcode command.
+// Generates a QR code with a static link to the bot with the "imhere" parameter.
 func handleQRCode(bot *tgbotapi.BotAPI, db Repository, msg *tgbotapi.Message) {
-	args := msg.CommandArguments()
-	if args == "" {
-		sendMessage(bot, msg.Chat.ID, "Использование: /qrcode id_события")
-		return
-	}
-	eventID, err := strconv.Atoi(strings.TrimSpace(args))
-	if err != nil {
-		sendMessage(bot, msg.Chat.ID, "Неверный id события")
-		return
-	}
-	qrData := "event:" + strconv.Itoa(eventID)
-	qrFile := "qrcode_event_" + strconv.Itoa(eventID) + ".png"
+	qrData := "https://t.me/RndPHPbot?start=imhere"
+	qrFile := "qrcode_event.png"
 	if err := qrcode.WriteFile(qrData, qrcode.Medium, 256, qrFile); err != nil {
 		sendMessage(bot, msg.Chat.ID, "Ошибка генерации QR-кода")
 		return
 	}
 	photo := tgbotapi.NewPhotoUpload(msg.Chat.ID, qrFile)
-	photo.Caption = "QR-код для регистрации на событие"
+	photo.Caption = "QR-код для отметки о посещении"
 	bot.Send(photo)
+	os.Remove(qrFile)
 }
