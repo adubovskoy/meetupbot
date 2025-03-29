@@ -1,4 +1,4 @@
-module rndphpbot
+module meetupbot
 
 go 1.24
 
