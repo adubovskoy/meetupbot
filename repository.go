@@ -83,8 +83,28 @@ func (r *SQLiteRepository) GetLatestEvent() (*Event, error) {
 	return &ev, nil
 }
 
-// RegisterUser saves the user registration data
+// RegisterUser saves the user registration data or updates existing unregistered user
 func (r *SQLiteRepository) RegisterUser(reg UserRegistration) error {
+	// Check if user exists but is unregistered
+	var count int
+	err := r.db.QueryRow("SELECT COUNT(*) FROM users WHERE telegram_id = ? AND event_id = ? AND registred = 0",
+		reg.TelegramID, reg.EventID).Scan(&count)
+	if err != nil {
+		return err
+	}
+
+	if count > 0 {
+		// User exists but is unregistered, update their registration status
+		stmt, err := r.db.Prepare("UPDATE users SET username = ?, name = ?, registration_date = ?, email = ?, registred = 1 WHERE telegram_id = ? AND event_id = ?")
+		if err != nil {
+			return err
+		}
+		defer stmt.Close()
+		_, err = stmt.Exec(reg.Username, reg.Name, reg.RegistrationDate.Format(time.RFC3339), reg.Email, reg.TelegramID, reg.EventID)
+		return err
+	}
+
+	// User doesn't exist, insert new record
 	stmt, err := r.db.Prepare("INSERT INTO users (telegram_id, username, name, registration_date, email, event_id, registred, visited) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
 	if err != nil {
 		return err
@@ -116,9 +136,9 @@ func (r *SQLiteRepository) UpdateEventRegistrationCount(eventID int) error {
 	return err
 }
 
-// RemoveRegistration removes a user's registration for an event
+// RemoveRegistration updates a user's registration status to unregistered
 func (r *SQLiteRepository) RemoveRegistration(telegramID int, eventID int) error {
-	stmt, err := r.db.Prepare("DELETE FROM users WHERE telegram_id = ? AND event_id = ?")
+	stmt, err := r.db.Prepare("UPDATE users SET registred = 0 WHERE telegram_id = ? AND event_id = ?")
 	if err != nil {
 		return err
 	}
@@ -230,7 +250,7 @@ func (r *SQLiteRepository) GetAllRegistrations() ([]UserRegistrationWithEvent, e
 		var reg UserRegistrationWithEvent
 		var regDateStr string
 		var eventDateStr, eventName sql.NullString
-		
+
 		err := rows.Scan(
 			&reg.TelegramID,
 			&reg.Username,
@@ -246,15 +266,15 @@ func (r *SQLiteRepository) GetAllRegistrations() ([]UserRegistrationWithEvent, e
 		if err != nil {
 			return nil, err
 		}
-		
+
 		reg.RegistrationDate, _ = time.Parse(time.RFC3339, regDateStr)
-		
+
 		if eventName.Valid {
 			reg.EventName = eventName.String
 		} else {
 			reg.EventName = "Unknown Event"
 		}
-		
+
 		if eventDateStr.Valid {
 			reg.EventDate, _ = time.Parse(time.RFC3339, eventDateStr.String)
 		} else {
