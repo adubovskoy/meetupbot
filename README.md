@@ -1,4 +1,4 @@
-# RND PHP Bot
+# Meetup registration Bot
 
 A Telegram bot for managing event registrations and attendance tracking. This bot allows users to register for events, check their registration status, and provides administrators with tools to manage events.
 
