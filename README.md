@@ -42,7 +42,7 @@ A Telegram bot for managing event registrations and attendance tracking. This bo
 4. Build and run the application:
    ```
    go build
-   ./rndphpbot
+   ./meetupbot
    ```
 
 ## Database Structure
