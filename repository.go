@@ -20,6 +20,8 @@ type Repository interface {
 	MarkEventsAsPast() error
 	AddEvent(name string, date time.Time, capacity int) error
 	GetAllRegistrations() ([]UserRegistrationWithEvent, error)
+	HasUserInfo(telegramID int) (bool, string, string, error)
+	UpdateUserName(telegramID int, name string) error
 	// Add method for SQL statement preparation
 	Prepare(query string) (*sql.Stmt, error)
 	Exec(query string, args ...interface{}) (sql.Result, error)
@@ -226,6 +228,42 @@ func (r *SQLiteRepository) Prepare(query string) (*sql.Stmt, error) {
 // Exec forwards the exec statement to the underlying database
 func (r *SQLiteRepository) Exec(query string, args ...interface{}) (sql.Result, error) {
 	return r.db.Exec(query, args...)
+}
+
+// HasUserInfo checks if a user has previously registered with name and email
+func (r *SQLiteRepository) HasUserInfo(telegramID int) (bool, string, string, error) {
+	query := `
+		SELECT name, email FROM users 
+		WHERE telegram_id = ? 
+		AND name IS NOT NULL AND name != '' 
+		AND email IS NOT NULL AND email != '' 
+		LIMIT 1
+	`
+	
+	row := r.db.QueryRow(query, telegramID)
+	
+	var name, email string
+	err := row.Scan(&name, &email)
+	
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return false, "", "", nil
+		}
+		return false, "", "", err
+	}
+	
+	return true, name, email, nil
+}
+
+// UpdateUserName updates the user's name
+func (r *SQLiteRepository) UpdateUserName(telegramID int, name string) error {
+	stmt, err := r.db.Prepare("UPDATE users SET name = ? WHERE telegram_id = ?")
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	_, err = stmt.Exec(name, telegramID)
+	return err
 }
 
 // GetAllRegistrations retrieves all user registrations with event details

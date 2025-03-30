@@ -10,8 +10,11 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
-// AdminUsers is a global variable that holds the list of admin usernames
-var AdminUsers []string
+// Global variables
+var (
+	AdminUsers    []string      // List of admin usernames
+	DialogMgr     *DialogManager // Dialog state manager
+)
 
 // IsAdmin checks if a username is in the list of admin users
 func IsAdmin(username string) bool {
@@ -24,6 +27,9 @@ func IsAdmin(username string) bool {
 }
 
 func main() {
+	// Initialize dialog manager
+	DialogMgr = NewDialogManager()
+	
 	botToken := os.Getenv("BOT_TOKEN")
 	if botToken == "" {
 		log.Fatal("BOT_TOKEN environment variable is required")
@@ -75,10 +81,16 @@ func main() {
 			continue
 		}
 		if update.Message != nil {
-			if update.Message.IsCommand() {
+			// Check if user is in a dialog
+			dialogState, eventID := DialogMgr.GetState(update.Message.From.ID)
+			
+			if dialogState != NoDialog && !update.Message.IsCommand() {
+				// Handle dialog based on state
+				handleDialog(bot, repo, update.Message, dialogState, eventID)
+			} else if update.Message.IsCommand() {
 				handleCommand(bot, repo, update.Message)
 			} else {
-				// New dialog mode: show appropriate button based on registration status
+				// No dialog mode: show appropriate button based on registration status
 				handleNoDialog(bot, repo, update.Message)
 			}
 		}
