@@ -29,8 +29,6 @@ func handleCommand(bot *tgbotapi.BotAPI, db Repository, msg *tgbotapi.Message) {
 		AdminCheckMiddleware(handleAddEvent)(bot, db, msg)
 	case "qrcode":
 		AdminCheckMiddleware(handleQRCode)(bot, db, msg)
-	case "addemail":
-		handleAddEmail(bot, db, msg)
 	case "state":
 		handleState(bot, db, msg)
 	case "export":
@@ -270,6 +268,54 @@ func handleImhere(bot *tgbotapi.BotAPI, db Repository, msg *tgbotapi.Message) {
 	}
 }
 
+// handleDialog processes user input during a dialog
+func handleDialog(bot *tgbotapi.BotAPI, db Repository, msg *tgbotapi.Message, state DialogState, eventID int) {
+	switch state {
+	case WaitingForName:
+		// Validate name format (Surname Name)
+		if !ValidateName(msg.Text) {
+			sendMessage(bot, msg.Chat.ID, "Пожалуйста, укажите Фамилию и Имя в формате: Фамилия Имя")
+			return
+		}
+
+		// Update user's name in the database
+		if err := db.UpdateUserName(msg.From.ID, msg.Text); err != nil {
+			sendMessage(bot, msg.Chat.ID, "Ошибка при сохранении имени. Пожалуйста, попробуйте еще раз.")
+			return
+		}
+
+		// Move to next state - asking for email
+		DialogMgr.SetState(msg.From.ID, WaitingForEmail, eventID)
+		sendMessage(bot, msg.Chat.ID, "Укажите email:")
+
+	case WaitingForEmail:
+		// Validate email format
+		if !ValidateEmail(msg.Text) {
+			sendMessage(bot, msg.Chat.ID, "Пожалуйста, укажите корректный email адрес.")
+			return
+		}
+
+		// Update user's email in the database
+		if err := db.UpdateUserEmail(msg.From.ID, msg.Text); err != nil {
+			sendMessage(bot, msg.Chat.ID, "Ошибка при сохранении email. Пожалуйста, попробуйте еще раз.")
+			return
+		}
+
+		// Clear dialog state
+		DialogMgr.ClearState(msg.From.ID)
+
+		// Confirm registration is complete
+		sendMessage(bot, msg.Chat.ID, "Спасибо! Ваша регистрация завершена.")
+
+		// Show remaining spots
+		event, err := db.GetLatestEvent()
+		if err == nil && event != nil {
+			remaining := event.capacity - event.registrationCount
+			sendMessage(bot, msg.Chat.ID, "Осталось мест: "+strconv.Itoa(remaining))
+		}
+	}
+}
+
 // handleCallbackQuery handles inline button callbacks.
 func handleCallbackQuery(bot *tgbotapi.BotAPI, db Repository, cq *tgbotapi.CallbackQuery) {
 	event, err := db.GetLatestEvent()
@@ -283,52 +329,90 @@ func handleCallbackQuery(bot *tgbotapi.BotAPI, db Repository, cq *tgbotapi.Callb
 	}
 
 	if cq.Data == "register" {
+		// Check if user already has name and email from previous registrations
+		hasInfo, name, email, err := db.HasUserInfo(cq.From.ID)
+		if err != nil {
+			sendMessage(bot, cq.Message.Chat.ID, "Ошибка проверки информации пользователя")
+			return
+		}
+
 		registered, existingReg, err := db.IsUserRegistered(cq.From.ID, event.id)
 		if err != nil {
 			sendMessage(bot, cq.Message.Chat.ID, "Ошибка проверки регистрации")
 			return
 		}
+
 		if !registered {
 			// First registration: add new row and update registration count.
+			initialName := cq.From.FirstName + " " + cq.From.LastName
+			if hasInfo {
+				initialName = name // Use existing name if available
+			}
+
 			reg := UserRegistration{
 				TelegramID:       cq.From.ID,
 				Username:         cq.From.UserName,
-				Name:             cq.From.FirstName + " " + cq.From.LastName,
+				Name:             initialName,
 				RegistrationDate: time.Now(),
-				Email:            "",
+				Email:            email, // Use existing email if available (will be empty if !hasInfo)
 				EventID:          event.id,
 				Registred:        1, // Set to 1 when registered through the button.
 				Visited:          0,
 			}
+
 			if err := db.RegisterUser(reg); err != nil {
 				sendMessage(bot, cq.Message.Chat.ID, "Ошибка при регистрации")
 				return
 			}
+
 			if err := db.UpdateEventRegistrationCount(event.id); err != nil {
 				sendMessage(bot, cq.Message.Chat.ID, "Ошибка обновления количества регистраций")
 				return
 			}
+
 			callback := tgbotapi.NewCallback(cq.ID, "Регистрация успешна!")
 			bot.AnswerCallbackQuery(callback)
+
+			// If user doesn't have complete info, start dialog to collect it
+			if !hasInfo {
+				// Start dialog for collecting name
+				DialogMgr.SetState(cq.From.ID, WaitingForName, event.id)
+				sendMessage(bot, cq.Message.Chat.ID, "Укажите Фамилию и Имя:")
+				return
+			}
 		} else {
 			// Registration update: update the existing row.
 			// Note: only active events can be updated.
+			initialName := cq.From.FirstName + " " + cq.From.LastName
+			if hasInfo {
+				initialName = name // Use existing name if available
+			}
+
 			reg := UserRegistration{
 				TelegramID:       cq.From.ID,
 				Username:         cq.From.UserName,
-				Name:             cq.From.FirstName + " " + cq.From.LastName,
+				Name:             initialName,
 				RegistrationDate: time.Now(), // Update registration date
-				Email:            "",         // Could be updated if needed
+				Email:            email,      // Use existing email if available (will be empty if !hasInfo)
 				EventID:          event.id,
 				Registred:        1,
 				Visited:          existingReg.Visited, // Preserve visited status
 			}
+
 			if err := db.UpdateRegistration(reg); err != nil {
 				sendMessage(bot, cq.Message.Chat.ID, "Ошибка обновления регистрации")
 				return
 			}
+
 			callback := tgbotapi.NewCallback(cq.ID, "Регистрация обновлена!")
 			bot.AnswerCallbackQuery(callback)
+
+			// If user doesn't have complete info, start dialog to collect it
+			if !hasInfo {
+				// Start dialog for collecting name
+				DialogMgr.SetState(cq.From.ID, WaitingForName, event.id)
+				sendMessage(bot, cq.Message.Chat.ID, "Укажите Фамилию и Имя:")
+			}
 		}
 	} else if cq.Data == "remove" {
 		registered, _, err := db.IsUserRegistered(cq.From.ID, event.id)
@@ -360,21 +444,6 @@ func handleCallbackQuery(bot *tgbotapi.BotAPI, db Repository, cq *tgbotapi.Callb
 	}
 	remaining := updatedEvent.capacity - updatedEvent.registrationCount
 	sendMessage(bot, cq.Message.Chat.ID, "Осталось мест: "+strconv.Itoa(remaining))
-}
-
-// handleAddEmail allows the user to optionally add an email to their registration.
-func handleAddEmail(bot *tgbotapi.BotAPI, db Repository, msg *tgbotapi.Message) {
-	args := msg.CommandArguments()
-	if args == "" {
-		sendMessage(bot, msg.Chat.ID, "Пожалуйста, укажите ваш email. Использование: /addemail your_email@example.com")
-		return
-	}
-	email := strings.TrimSpace(args)
-	if err := db.UpdateUserEmail(msg.From.ID, email); err != nil {
-		sendMessage(bot, msg.Chat.ID, "Ошибка обновления email.")
-		return
-	}
-	sendMessage(bot, msg.Chat.ID, "Email успешно обновлён!")
 }
 
 // handleAddEvent handles the /addevent command.
