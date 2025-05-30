@@ -305,9 +305,23 @@ func handleDialog(bot *tgbotapi.BotAPI, db Repository, msg *tgbotapi.Message, st
 			return
 		}
 
-		// Move to next state - asking for email
-		DialogMgr.SetState(msg.From.ID, WaitingForEmail, eventID)
-		sendMessage(bot, msg.Chat.ID, "Укажите email:")
+		// Check if email is mandatory
+		if AppConfig.HasMandatoryField("email") {
+			// Move to next state - asking for email
+			DialogMgr.SetState(msg.From.ID, WaitingForEmail, eventID)
+			sendMessage(bot, msg.Chat.ID, "Укажите email:")
+		} else {
+			// Email is not mandatory, registration is complete
+			DialogMgr.ClearState(msg.From.ID)
+			sendMessage(bot, msg.Chat.ID, "Спасибо! Ваша регистрация завершена.")
+			
+			// Show remaining spots
+			event, err := db.GetLatestEvent()
+			if err == nil && event != nil {
+				remaining := event.capacity - event.registrationCount
+				sendMessage(bot, msg.Chat.ID, "Осталось мест: "+strconv.Itoa(remaining))
+			}
+		}
 
 	case WaitingForEmail:
 		// Validate email format
@@ -357,12 +371,22 @@ func handleCallbackQuery(bot *tgbotapi.BotAPI, db Repository, cq *tgbotapi.Callb
 	}
 
 	if cq.Data == "register" {
-		// Check if user already has name and email from previous registrations
+		// Check if user already has required info from previous registrations
 		hasInfo, name, email, err := db.HasUserInfo(cq.From.ID)
 		if err != nil {
 			sendMessage(bot, cq.Message.Chat.ID, "Ошибка проверки информации пользователя")
 			return
 		}
+
+		// Check which mandatory fields are missing
+		var missingFields []string
+		if AppConfig.HasMandatoryField("name") && (name == "" || name == cq.From.FirstName+" "+cq.From.LastName) {
+			missingFields = append(missingFields, "name")
+		}
+		if AppConfig.HasMandatoryField("email") && email == "" {
+			missingFields = append(missingFields, "email")
+		}
+		needsDialog := len(missingFields) > 0
 
 		registered, existingReg, err := db.IsUserRegistered(cq.From.ID, event.id)
 		if err != nil {
@@ -401,15 +425,31 @@ func handleCallbackQuery(bot *tgbotapi.BotAPI, db Repository, cq *tgbotapi.Callb
 			callback := tgbotapi.NewCallback(cq.ID, "Регистрация успешна!")
 			bot.AnswerCallbackQuery(callback)
 
-			// If user doesn't have complete info, start dialog to collect it
-			if !hasInfo {
-				// Start dialog for collecting name
-				DialogMgr.SetState(cq.From.ID, WaitingForName, event.id)
-				sendMessage(bot, cq.Message.Chat.ID, "Укажите Фамилию и Имя:")
+			// If mandatory fields are missing, start dialog to collect them
+			if needsDialog {
+				// Determine which dialog state to start with
+				if AppConfig.HasMandatoryField("name") && (name == "" || name == cq.From.FirstName+" "+cq.From.LastName) {
+					DialogMgr.SetState(cq.From.ID, WaitingForName, event.id)
+					sendMessage(bot, cq.Message.Chat.ID, "Укажите Фамилию и Имя:")
+				} else if AppConfig.HasMandatoryField("email") && email == "" {
+					DialogMgr.SetState(cq.From.ID, WaitingForEmail, event.id)
+					sendMessage(bot, cq.Message.Chat.ID, "Укажите email:")
+				}
 				return
 			} else {
-				// User has complete info, confirm registration with their existing data
-				sendMessage(bot, cq.Message.Chat.ID, "Вы зарегистрированы с вашими сохраненными данными:\nИмя: "+name+"\nEmail: "+email)
+				// No mandatory fields or user has all required info
+				if len(AppConfig.MandatoryFields) == 0 {
+					sendMessage(bot, cq.Message.Chat.ID, "Вы успешно зарегистрированы!")
+				} else {
+					msg := "Вы зарегистрированы с вашими сохраненными данными:"
+					if AppConfig.HasMandatoryField("name") {
+						msg += "\nИмя: " + name
+					}
+					if AppConfig.HasMandatoryField("email") {
+						msg += "\nEmail: " + email
+					}
+					sendMessage(bot, cq.Message.Chat.ID, msg)
+				}
 			}
 		} else {
 			// Registration update: update the existing row.
@@ -438,14 +478,30 @@ func handleCallbackQuery(bot *tgbotapi.BotAPI, db Repository, cq *tgbotapi.Callb
 			callback := tgbotapi.NewCallback(cq.ID, "Регистрация обновлена!")
 			bot.AnswerCallbackQuery(callback)
 
-			// If user doesn't have complete info, start dialog to collect it
-			if !hasInfo {
-				// Start dialog for collecting name
-				DialogMgr.SetState(cq.From.ID, WaitingForName, event.id)
-				sendMessage(bot, cq.Message.Chat.ID, "Укажите Фамилию и Имя:")
+			// If mandatory fields are missing, start dialog to collect them
+			if needsDialog {
+				// Determine which dialog state to start with
+				if AppConfig.HasMandatoryField("name") && (name == "" || name == cq.From.FirstName+" "+cq.From.LastName) {
+					DialogMgr.SetState(cq.From.ID, WaitingForName, event.id)
+					sendMessage(bot, cq.Message.Chat.ID, "Укажите Фамилию и Имя:")
+				} else if AppConfig.HasMandatoryField("email") && email == "" {
+					DialogMgr.SetState(cq.From.ID, WaitingForEmail, event.id)
+					sendMessage(bot, cq.Message.Chat.ID, "Укажите email:")
+				}
 			} else {
-				// User has complete info, confirm update with their existing data
-				sendMessage(bot, cq.Message.Chat.ID, "Регистрация обновлена с вашими сохраненными данными:\nИмя: "+name+"\nEmail: "+email)
+				// No mandatory fields or user has all required info
+				if len(AppConfig.MandatoryFields) == 0 {
+					sendMessage(bot, cq.Message.Chat.ID, "Регистрация успешно обновлена!")
+				} else {
+					msg := "Регистрация обновлена с вашими сохраненными данными:"
+					if AppConfig.HasMandatoryField("name") {
+						msg += "\nИмя: " + name
+					}
+					if AppConfig.HasMandatoryField("email") {
+						msg += "\nEmail: " + email
+					}
+					sendMessage(bot, cq.Message.Chat.ID, msg)
+				}
 			}
 		}
 	} else if cq.Data == "remove" {

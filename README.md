@@ -30,13 +30,13 @@ A Telegram bot for managing event registrations and attendance tracking. This bo
    go mod download
    ```
 
-3. Set the required environment variables:
+3. Configure the bot:
    ```
-   # Required: Telegram Bot Token
-   export BOT_TOKEN=your_telegram_bot_token
+   # Copy the example .env file
+   cp .env.example .env
    
-   # Optional: Admin users (comma-separated list of Telegram usernames)
-   export ADMIN_USERS=admin1,admin2,admin3
+   # Edit .env with your configuration
+   nano .env
    ```
 
 4. Build and run the application:
@@ -44,6 +44,34 @@ A Telegram bot for managing event registrations and attendance tracking. This bo
    go build
    ./meetupbot
    ```
+
+## Configuration
+
+The bot uses a `.env` file for configuration. Create a `.env` file in the project root with the following options:
+
+```
+# Required: Telegram Bot API Token
+BOT_TOKEN=your_bot_token_here
+
+# Optional: Admin Users
+# Comma-separated list of Telegram usernames who can perform admin actions
+ADMIN_USERS=admin1,admin2,admin3
+
+# Optional: Mandatory Fields
+# Comma-separated list of fields that users must provide during registration
+# Available fields: name, email
+# If empty, users will be registered without any additional dialogs
+MANDATORY_FIELDS=name,email
+```
+
+### Configuration Options
+
+- **BOT_TOKEN** (required): Your Telegram Bot API token obtained from [@BotFather](https://t.me/BotFather)
+- **ADMIN_USERS** (optional): List of Telegram usernames that have admin privileges. These users can create events and generate QR codes.
+- **MANDATORY_FIELDS** (optional): Fields that users must provide during registration:
+  - `name`: User's full name in format "Surname Name"
+  - `email`: User's email address
+  - If left empty, users will be registered immediately without any additional information requests
 
 ## Database Structure
 
