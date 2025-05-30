@@ -34,7 +34,7 @@ A Telegram bot for managing event registrations and attendance tracking. This bo
    ```
    # Copy the example .env file
    cp .env.example .env
-   
+
    # Edit .env with your configuration
    nano .env
    ```
@@ -85,14 +85,13 @@ The bot uses SQLite3 with two main tables:
 ### User Commands
 
 - `/start` - Welcome message and registration option
-- `/register` - Register for the current active event
 - `/state` - Check registration status and available spots
-- `/addemail your_email@example.com` - Add or update your email address
 
 ### Admin Commands
 
 - `/addevent EventName;YYYY-MM-DD;Capacity` - Create a new event (automatically marks previous events as past)
 - `/qrcode` - Generate a QR code for event check-in
+- `/export` - Download CSV file with registrations
 
 ## QR Code Check-in
 
