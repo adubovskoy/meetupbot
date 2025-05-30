@@ -196,10 +196,6 @@ func handleNoDialog(bot *tgbotapi.BotAPI, db Repository, msg *tgbotapi.Message) 
 		sendMessage(bot, msg.Chat.ID, "Ошибка получения информации о событии")
 		return
 	}
-	if event == nil {
-		sendMessage(bot, msg.Chat.ID, "Регистрация закрыта")
-		return
-	}
 
 	registered, _, err := db.IsUserRegistered(msg.From.ID, event.id)
 	if err != nil {
@@ -223,6 +219,12 @@ func handleNoDialog(bot *tgbotapi.BotAPI, db Repository, msg *tgbotapi.Message) 
 
 	// If registration is closed and user is not registered, just show closed message
 	if registrationClosed && !registered {
+		sendMessage(bot, msg.Chat.ID, "Регистрация закрыта")
+		return
+	}
+
+	// If no future event, show closed message
+	if event == nil {
 		sendMessage(bot, msg.Chat.ID, "Регистрация закрыта")
 		return
 	}
@@ -405,6 +407,9 @@ func handleCallbackQuery(bot *tgbotapi.BotAPI, db Repository, cq *tgbotapi.Callb
 				DialogMgr.SetState(cq.From.ID, WaitingForName, event.id)
 				sendMessage(bot, cq.Message.Chat.ID, "Укажите Фамилию и Имя:")
 				return
+			} else {
+				// User has complete info, confirm registration with their existing data
+				sendMessage(bot, cq.Message.Chat.ID, "Вы зарегистрированы с вашими сохраненными данными:\nИмя: "+name+"\nEmail: "+email)
 			}
 		} else {
 			// Registration update: update the existing row.
@@ -438,6 +443,9 @@ func handleCallbackQuery(bot *tgbotapi.BotAPI, db Repository, cq *tgbotapi.Callb
 				// Start dialog for collecting name
 				DialogMgr.SetState(cq.From.ID, WaitingForName, event.id)
 				sendMessage(bot, cq.Message.Chat.ID, "Укажите Фамилию и Имя:")
+			} else {
+				// User has complete info, confirm update with their existing data
+				sendMessage(bot, cq.Message.Chat.ID, "Регистрация обновлена с вашими сохраненными данными:\nИмя: "+name+"\nEmail: "+email)
 			}
 		}
 	} else if cq.Data == "remove" {
