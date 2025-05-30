@@ -196,7 +196,7 @@ func handleNoDialog(bot *tgbotapi.BotAPI, db Repository, msg *tgbotapi.Message) 
 		sendMessage(bot, msg.Chat.ID, "Ошибка получения информации о событии")
 		return
 	}
-	if event == nil || event.registrationCount >= event.capacity {
+	if event == nil {
 		sendMessage(bot, msg.Chat.ID, "Регистрация закрыта")
 		return
 	}
@@ -208,7 +208,26 @@ func handleNoDialog(bot *tgbotapi.BotAPI, db Repository, msg *tgbotapi.Message) 
 	}
 
 	activeMeetupDate := event.date.Format("02.01.2006")
+	registrationClosed := event.registrationCount >= event.capacity
 
+	// If registration is closed but user is registered, show deregistration button
+	if registrationClosed && registered {
+		button := tgbotapi.NewInlineKeyboardButtonData("Передумал, удалите меня", "remove")
+		row := tgbotapi.NewInlineKeyboardRow(button)
+		keyboard := tgbotapi.NewInlineKeyboardMarkup(row)
+		message := tgbotapi.NewMessage(msg.Chat.ID, "Регистрация закрыта. Вы зарегистрированы на митап "+activeMeetupDate)
+		message.ReplyMarkup = keyboard
+		bot.Send(message)
+		return
+	}
+
+	// If registration is closed and user is not registered, just show closed message
+	if registrationClosed && !registered {
+		sendMessage(bot, msg.Chat.ID, "Регистрация закрыта")
+		return
+	}
+
+	// Registration is open, show appropriate button
 	var button tgbotapi.InlineKeyboardButton
 	if registered {
 		button = tgbotapi.NewInlineKeyboardButtonData("Передумал, удалите меня", "remove")
@@ -323,7 +342,14 @@ func handleCallbackQuery(bot *tgbotapi.BotAPI, db Repository, cq *tgbotapi.Callb
 		sendMessage(bot, cq.Message.Chat.ID, "Ошибка получения информации о событии")
 		return
 	}
-	if event == nil || event.registrationCount >= event.capacity {
+	if event == nil {
+		sendMessage(bot, cq.Message.Chat.ID, "Нет активного события")
+		return
+	}
+
+	// Check if registration is closed, but allow deregistration
+	registrationClosed := event.registrationCount >= event.capacity
+	if registrationClosed && cq.Data == "register" {
 		sendMessage(bot, cq.Message.Chat.ID, "Регистрация закрыта")
 		return
 	}
