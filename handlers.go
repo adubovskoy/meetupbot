@@ -29,12 +29,12 @@ func handleCommand(bot *tgbotapi.BotAPI, db Repository, msg *tgbotapi.Message) {
 		AdminCheckMiddleware(handleAddEvent)(bot, db, msg)
 	case "qrcode":
 		AdminCheckMiddleware(handleQRCode)(bot, db, msg)
-	case "addemail":
-		handleAddEmail(bot, db, msg)
 	case "state":
 		handleState(bot, db, msg)
 	case "export":
 		AdminCheckMiddleware(handleExport)(bot, db, msg)
+	case "remove":
+		AdminCheckMiddleware(handleRemoveUser)(bot, db, msg)
 	default:
 		sendMessage(bot, msg.Chat.ID, "Неизвестная команда")
 	}
@@ -185,7 +185,12 @@ func handleState(bot *tgbotapi.BotAPI, db Repository, msg *tgbotapi.Message) {
 		return
 	}
 	if registered {
-		sendMessage(bot, msg.Chat.ID, "Вы зарегистрированы")
+		button := tgbotapi.NewInlineKeyboardButtonData("Передумал, удалите меня", "remove")
+		row := tgbotapi.NewInlineKeyboardRow(button)
+		keyboard := tgbotapi.NewInlineKeyboardMarkup(row)
+		message := tgbotapi.NewMessage(msg.Chat.ID, "Вы зарегистрированы")
+		message.ReplyMarkup = keyboard
+		bot.Send(message)
 	} else {
 		sendMessage(bot, msg.Chat.ID, "Вы не зарегистрированы")
 	}
@@ -198,10 +203,6 @@ func handleNoDialog(bot *tgbotapi.BotAPI, db Repository, msg *tgbotapi.Message) 
 		sendMessage(bot, msg.Chat.ID, "Ошибка получения информации о событии")
 		return
 	}
-	if event == nil || event.registrationCount >= event.capacity {
-		sendMessage(bot, msg.Chat.ID, "Регистрация закрыта")
-		return
-	}
 
 	registered, _, err := db.IsUserRegistered(msg.From.ID, event.id)
 	if err != nil {
@@ -210,7 +211,44 @@ func handleNoDialog(bot *tgbotapi.BotAPI, db Repository, msg *tgbotapi.Message) 
 	}
 
 	activeMeetupDate := event.date.Format("02.01.2006")
+	registrationClosed := event.registrationCount >= event.capacity
 
+	// If registration is closed but user is registered, show deregistration button
+	if registrationClosed && registered {
+		button := tgbotapi.NewInlineKeyboardButtonData("Передумал, удалите меня", "remove")
+		row := tgbotapi.NewInlineKeyboardRow(button)
+		keyboard := tgbotapi.NewInlineKeyboardMarkup(row)
+		message := tgbotapi.NewMessage(msg.Chat.ID, "Регистрация закрыта. Вы зарегистрированы на митап "+activeMeetupDate)
+		message.ReplyMarkup = keyboard
+		bot.Send(message)
+		return
+	}
+
+	// If registration is closed and user is not registered, offer waitlist directly
+	if registrationClosed && !registered {
+		// Check if already in waitlist
+		inWaitlist, _ := db.IsUserInWaitlist(msg.From.ID, event.id)
+		if inWaitlist {
+			sendMessage(bot, msg.Chat.ID, "Мест нет. Вы в очереди ожидания - мы сообщим, когда появится место.")
+			return
+		}
+		yesButton := tgbotapi.NewInlineKeyboardButtonData("Да", "join_waitlist")
+		noButton := tgbotapi.NewInlineKeyboardButtonData("Нет", "decline_waitlist")
+		row := tgbotapi.NewInlineKeyboardRow(yesButton, noButton)
+		keyboard := tgbotapi.NewInlineKeyboardMarkup(row)
+		message := tgbotapi.NewMessage(msg.Chat.ID, "Сожалеем, мест больше нет. Хотите, чтобы мы сообщили, если место освободится?")
+		message.ReplyMarkup = keyboard
+		bot.Send(message)
+		return
+	}
+
+	// If no future event, show closed message
+	if event == nil {
+		sendMessage(bot, msg.Chat.ID, "Регистрация закрыта")
+		return
+	}
+
+	// Registration is open, show appropriate button
 	var button tgbotapi.InlineKeyboardButton
 	if registered {
 		button = tgbotapi.NewInlineKeyboardButtonData("Передумал, удалите меня", "remove")
@@ -270,6 +308,85 @@ func handleImhere(bot *tgbotapi.BotAPI, db Repository, msg *tgbotapi.Message) {
 	}
 }
 
+// handleDialogCancel cancels the current dialog and removes the incomplete registration
+func handleDialogCancel(bot *tgbotapi.BotAPI, db Repository, msg *tgbotapi.Message, eventID int) {
+	// Clear dialog state
+	DialogMgr.ClearState(msg.From.ID)
+
+	// Remove the incomplete registration
+	if err := db.RemoveRegistration(msg.From.ID, eventID); err != nil {
+		// Log error but don't notify user - they're moving on to a command
+		return
+	}
+
+	// Decrement registration count
+	db.DecrementEventRegistrationCount(eventID)
+
+	sendMessage(bot, msg.Chat.ID, "Регистрация отменена. Вы не указали обязательные данные.")
+}
+
+// handleDialog processes user input during a dialog
+func handleDialog(bot *tgbotapi.BotAPI, db Repository, msg *tgbotapi.Message, state DialogState, eventID int) {
+	switch state {
+	case WaitingForName:
+		// Validate name format (Surname Name)
+		if !ValidateName(msg.Text) {
+			sendMessage(bot, msg.Chat.ID, "Пожалуйста, укажите Фамилию и Имя в формате: Фамилия Имя")
+			return
+		}
+
+		// Update user's name in the database
+		if err := db.UpdateUserName(msg.From.ID, msg.Text); err != nil {
+			sendMessage(bot, msg.Chat.ID, "Ошибка при сохранении имени. Пожалуйста, попробуйте еще раз.")
+			return
+		}
+
+		// Check if email is mandatory
+		if AppConfig.HasMandatoryField("email") {
+			// Move to next state - asking for email
+			DialogMgr.SetState(msg.From.ID, WaitingForEmail, eventID)
+			sendMessage(bot, msg.Chat.ID, "Укажите email:")
+		} else {
+			// Email is not mandatory, registration is complete
+			DialogMgr.ClearState(msg.From.ID)
+			sendMessage(bot, msg.Chat.ID, "Спасибо! Ваша регистрация завершена.")
+			
+			// Show remaining spots
+			event, err := db.GetLatestEvent()
+			if err == nil && event != nil {
+				remaining := event.capacity - event.registrationCount
+				sendMessage(bot, msg.Chat.ID, "Осталось мест: "+strconv.Itoa(remaining))
+			}
+		}
+
+	case WaitingForEmail:
+		// Validate email format
+		if !ValidateEmail(msg.Text) {
+			sendMessage(bot, msg.Chat.ID, "Пожалуйста, укажите корректный email адрес.")
+			return
+		}
+
+		// Update user's email in the database
+		if err := db.UpdateUserEmail(msg.From.ID, msg.Text); err != nil {
+			sendMessage(bot, msg.Chat.ID, "Ошибка при сохранении email. Пожалуйста, попробуйте еще раз.")
+			return
+		}
+
+		// Clear dialog state
+		DialogMgr.ClearState(msg.From.ID)
+
+		// Confirm registration is complete
+		sendMessage(bot, msg.Chat.ID, "Спасибо! Ваша регистрация завершена.")
+
+		// Show remaining spots
+		event, err := db.GetLatestEvent()
+		if err == nil && event != nil {
+			remaining := event.capacity - event.registrationCount
+			sendMessage(bot, msg.Chat.ID, "Осталось мест: "+strconv.Itoa(remaining))
+		}
+	}
+}
+
 // handleCallbackQuery handles inline button callbacks.
 func handleCallbackQuery(bot *tgbotapi.BotAPI, db Repository, cq *tgbotapi.CallbackQuery) {
 	event, err := db.GetLatestEvent()
@@ -277,58 +394,170 @@ func handleCallbackQuery(bot *tgbotapi.BotAPI, db Repository, cq *tgbotapi.Callb
 		sendMessage(bot, cq.Message.Chat.ID, "Ошибка получения информации о событии")
 		return
 	}
-	if event == nil || event.registrationCount >= event.capacity {
-		sendMessage(bot, cq.Message.Chat.ID, "Регистрация закрыта")
+	if event == nil {
+		sendMessage(bot, cq.Message.Chat.ID, "Нет активного события")
+		return
+	}
+
+	// Check if registration is closed, but allow deregistration
+	registrationClosed := event.registrationCount >= event.capacity
+	if registrationClosed && cq.Data == "register" {
+		// Check if user is already in waitlist
+		inWaitlist, err := db.IsUserInWaitlist(cq.From.ID, event.id)
+		if err != nil {
+			sendMessage(bot, cq.Message.Chat.ID, "Ошибка проверки очереди ожидания")
+			return
+		}
+		if inWaitlist {
+			sendMessage(bot, cq.Message.Chat.ID, "Вы уже в очереди ожидания. Мы сообщим вам, когда появится свободное место.")
+			return
+		}
+		// Show waitlist offer
+		yesButton := tgbotapi.NewInlineKeyboardButtonData("Да", "join_waitlist")
+		noButton := tgbotapi.NewInlineKeyboardButtonData("Нет", "decline_waitlist")
+		row := tgbotapi.NewInlineKeyboardRow(yesButton, noButton)
+		keyboard := tgbotapi.NewInlineKeyboardMarkup(row)
+		message := tgbotapi.NewMessage(cq.Message.Chat.ID, "Сожалеем, мест больше нет. Хотите забронировать место, если освободится?")
+		message.ReplyMarkup = keyboard
+		bot.Send(message)
+		callback := tgbotapi.NewCallback(cq.ID, "")
+		bot.AnswerCallbackQuery(callback)
 		return
 	}
 
 	if cq.Data == "register" {
+		// Check if user already has required info from previous registrations
+		hasInfo, name, email, err := db.HasUserInfo(cq.From.ID)
+		if err != nil {
+			sendMessage(bot, cq.Message.Chat.ID, "Ошибка проверки информации пользователя")
+			return
+		}
+
+		// Check which mandatory fields are missing
+		var missingFields []string
+		if AppConfig.HasMandatoryField("name") && (name == "" || name == cq.From.FirstName+" "+cq.From.LastName) {
+			missingFields = append(missingFields, "name")
+		}
+		if AppConfig.HasMandatoryField("email") && email == "" {
+			missingFields = append(missingFields, "email")
+		}
+		needsDialog := len(missingFields) > 0
+
 		registered, existingReg, err := db.IsUserRegistered(cq.From.ID, event.id)
 		if err != nil {
 			sendMessage(bot, cq.Message.Chat.ID, "Ошибка проверки регистрации")
 			return
 		}
+
 		if !registered {
 			// First registration: add new row and update registration count.
+			initialName := cq.From.FirstName + " " + cq.From.LastName
+			if hasInfo {
+				initialName = name // Use existing name if available
+			}
+
 			reg := UserRegistration{
 				TelegramID:       cq.From.ID,
 				Username:         cq.From.UserName,
-				Name:             cq.From.FirstName + " " + cq.From.LastName,
+				Name:             initialName,
 				RegistrationDate: time.Now(),
-				Email:            "",
+				Email:            email, // Use existing email if available (will be empty if !hasInfo)
 				EventID:          event.id,
 				Registred:        1, // Set to 1 when registered through the button.
 				Visited:          0,
 			}
+
 			if err := db.RegisterUser(reg); err != nil {
 				sendMessage(bot, cq.Message.Chat.ID, "Ошибка при регистрации")
 				return
 			}
+
 			if err := db.UpdateEventRegistrationCount(event.id); err != nil {
 				sendMessage(bot, cq.Message.Chat.ID, "Ошибка обновления количества регистраций")
 				return
 			}
+
 			callback := tgbotapi.NewCallback(cq.ID, "Регистрация успешна!")
 			bot.AnswerCallbackQuery(callback)
+
+			// If mandatory fields are missing, start dialog to collect them
+			if needsDialog {
+				// Determine which dialog state to start with
+				if AppConfig.HasMandatoryField("name") && (name == "" || name == cq.From.FirstName+" "+cq.From.LastName) {
+					DialogMgr.SetState(cq.From.ID, WaitingForName, event.id)
+					sendMessage(bot, cq.Message.Chat.ID, "Укажите Фамилию и Имя:")
+				} else if AppConfig.HasMandatoryField("email") && email == "" {
+					DialogMgr.SetState(cq.From.ID, WaitingForEmail, event.id)
+					sendMessage(bot, cq.Message.Chat.ID, "Укажите email:")
+				}
+				return
+			} else {
+				// No mandatory fields or user has all required info
+				if len(AppConfig.MandatoryFields) == 0 {
+					sendMessage(bot, cq.Message.Chat.ID, "Вы успешно зарегистрированы!")
+				} else {
+					msg := "Вы зарегистрированы с вашими сохраненными данными:"
+					if AppConfig.HasMandatoryField("name") {
+						msg += "\nИмя: " + name
+					}
+					if AppConfig.HasMandatoryField("email") {
+						msg += "\nEmail: " + email
+					}
+					sendMessage(bot, cq.Message.Chat.ID, msg)
+				}
+			}
 		} else {
 			// Registration update: update the existing row.
 			// Note: only active events can be updated.
+			initialName := cq.From.FirstName + " " + cq.From.LastName
+			if hasInfo {
+				initialName = name // Use existing name if available
+			}
+
 			reg := UserRegistration{
 				TelegramID:       cq.From.ID,
 				Username:         cq.From.UserName,
-				Name:             cq.From.FirstName + " " + cq.From.LastName,
+				Name:             initialName,
 				RegistrationDate: time.Now(), // Update registration date
-				Email:            "",         // Could be updated if needed
+				Email:            email,      // Use existing email if available (will be empty if !hasInfo)
 				EventID:          event.id,
 				Registred:        1,
 				Visited:          existingReg.Visited, // Preserve visited status
 			}
+
 			if err := db.UpdateRegistration(reg); err != nil {
 				sendMessage(bot, cq.Message.Chat.ID, "Ошибка обновления регистрации")
 				return
 			}
+
 			callback := tgbotapi.NewCallback(cq.ID, "Регистрация обновлена!")
 			bot.AnswerCallbackQuery(callback)
+
+			// If mandatory fields are missing, start dialog to collect them
+			if needsDialog {
+				// Determine which dialog state to start with
+				if AppConfig.HasMandatoryField("name") && (name == "" || name == cq.From.FirstName+" "+cq.From.LastName) {
+					DialogMgr.SetState(cq.From.ID, WaitingForName, event.id)
+					sendMessage(bot, cq.Message.Chat.ID, "Укажите Фамилию и Имя:")
+				} else if AppConfig.HasMandatoryField("email") && email == "" {
+					DialogMgr.SetState(cq.From.ID, WaitingForEmail, event.id)
+					sendMessage(bot, cq.Message.Chat.ID, "Укажите email:")
+				}
+			} else {
+				// No mandatory fields or user has all required info
+				if len(AppConfig.MandatoryFields) == 0 {
+					sendMessage(bot, cq.Message.Chat.ID, "Регистрация успешно обновлена!")
+				} else {
+					msg := "Регистрация обновлена с вашими сохраненными данными:"
+					if AppConfig.HasMandatoryField("name") {
+						msg += "\nИмя: " + name
+					}
+					if AppConfig.HasMandatoryField("email") {
+						msg += "\nEmail: " + email
+					}
+					sendMessage(bot, cq.Message.Chat.ID, msg)
+				}
+			}
 		}
 	} else if cq.Data == "remove" {
 		registered, _, err := db.IsUserRegistered(cq.From.ID, event.id)
@@ -351,6 +580,107 @@ func handleCallbackQuery(bot *tgbotapi.BotAPI, db Repository, cq *tgbotapi.Callb
 		}
 		callback := tgbotapi.NewCallback(cq.ID, "Регистрация удалена!")
 		bot.AnswerCallbackQuery(callback)
+
+		// Notify waitlist users that a spot is available
+		notifyWaitlist(bot, db, event.id)
+	} else if cq.Data == "join_waitlist" {
+		// Add user to waitlist
+		if err := db.AddToWaitlist(cq.From.ID, cq.Message.Chat.ID, cq.From.UserName, event.id); err != nil {
+			sendMessage(bot, cq.Message.Chat.ID, "Ошибка добавления в очередь ожидания")
+			return
+		}
+		callback := tgbotapi.NewCallback(cq.ID, "Вы добавлены в очередь!")
+		bot.AnswerCallbackQuery(callback)
+		sendMessage(bot, cq.Message.Chat.ID, "Вы добавлены в очередь ожидания. Мы сообщим вам, когда появится свободное место.")
+		return
+	} else if cq.Data == "decline_waitlist" {
+		callback := tgbotapi.NewCallback(cq.ID, "")
+		bot.AnswerCallbackQuery(callback)
+		sendMessage(bot, cq.Message.Chat.ID, "Хорошо. Если передумаете, вы всегда можете попробовать снова.")
+		return
+	} else if cq.Data == "waitlist_book" {
+		// User wants to book from waitlist notification
+		// First check if there's still a spot available
+		currentEvent, err := db.GetLatestEvent()
+		if err != nil || currentEvent == nil || currentEvent.id != event.id {
+			sendMessage(bot, cq.Message.Chat.ID, "К сожалению, событие уже завершено.")
+			db.RemoveFromWaitlist(cq.From.ID, event.id)
+			return
+		}
+		if currentEvent.registrationCount >= currentEvent.capacity {
+			sendMessage(bot, cq.Message.Chat.ID, "К сожалению, место уже занято. Вы остаётесь в очереди ожидания.")
+			callback := tgbotapi.NewCallback(cq.ID, "Место уже занято")
+			bot.AnswerCallbackQuery(callback)
+			return
+		}
+
+		// Remove from waitlist first
+		db.RemoveFromWaitlist(cq.From.ID, event.id)
+
+		// Now proceed with normal registration flow
+		hasInfo, name, email, err := db.HasUserInfo(cq.From.ID)
+		if err != nil {
+			sendMessage(bot, cq.Message.Chat.ID, "Ошибка проверки информации пользователя")
+			return
+		}
+
+		var missingFields []string
+		if AppConfig.HasMandatoryField("name") && (name == "" || name == cq.From.FirstName+" "+cq.From.LastName) {
+			missingFields = append(missingFields, "name")
+		}
+		if AppConfig.HasMandatoryField("email") && email == "" {
+			missingFields = append(missingFields, "email")
+		}
+		needsDialog := len(missingFields) > 0
+
+		initialName := cq.From.FirstName + " " + cq.From.LastName
+		if hasInfo && name != "" {
+			initialName = name
+		}
+
+		reg := UserRegistration{
+			TelegramID:       cq.From.ID,
+			Username:         cq.From.UserName,
+			Name:             initialName,
+			RegistrationDate: time.Now(),
+			Email:            email,
+			EventID:          event.id,
+			Registred:        1,
+			Visited:          0,
+		}
+
+		if err := db.RegisterUser(reg); err != nil {
+			sendMessage(bot, cq.Message.Chat.ID, "Ошибка при регистрации")
+			return
+		}
+
+		if err := db.UpdateEventRegistrationCount(event.id); err != nil {
+			sendMessage(bot, cq.Message.Chat.ID, "Ошибка обновления количества регистраций")
+			return
+		}
+
+		callback := tgbotapi.NewCallback(cq.ID, "Регистрация успешна!")
+		bot.AnswerCallbackQuery(callback)
+
+		if needsDialog {
+			if AppConfig.HasMandatoryField("name") && (name == "" || name == cq.From.FirstName+" "+cq.From.LastName) {
+				DialogMgr.SetState(cq.From.ID, WaitingForName, event.id)
+				sendMessage(bot, cq.Message.Chat.ID, "Отлично! Место забронировано. Укажите Фамилию и Имя:")
+			} else if AppConfig.HasMandatoryField("email") && email == "" {
+				DialogMgr.SetState(cq.From.ID, WaitingForEmail, event.id)
+				sendMessage(bot, cq.Message.Chat.ID, "Отлично! Место забронировано. Укажите email:")
+			}
+		} else {
+			sendMessage(bot, cq.Message.Chat.ID, "Отлично! Вы успешно зарегистрированы!")
+		}
+		return
+	} else if cq.Data == "waitlist_decline" {
+		// User declines the spot offer from waitlist
+		db.RemoveFromWaitlist(cq.From.ID, event.id)
+		callback := tgbotapi.NewCallback(cq.ID, "")
+		bot.AnswerCallbackQuery(callback)
+		sendMessage(bot, cq.Message.Chat.ID, "Хорошо. Вы удалены из очереди ожидания.")
+		return
 	}
 
 	updatedEvent, err := db.GetLatestEvent()
@@ -362,19 +692,32 @@ func handleCallbackQuery(bot *tgbotapi.BotAPI, db Repository, cq *tgbotapi.Callb
 	sendMessage(bot, cq.Message.Chat.ID, "Осталось мест: "+strconv.Itoa(remaining))
 }
 
-// handleAddEmail allows the user to optionally add an email to their registration.
-func handleAddEmail(bot *tgbotapi.BotAPI, db Repository, msg *tgbotapi.Message) {
-	args := msg.CommandArguments()
-	if args == "" {
-		sendMessage(bot, msg.Chat.ID, "Пожалуйста, укажите ваш email. Использование: /addemail your_email@example.com")
+// notifyWaitlist sends notifications to all users in the waitlist for an event
+func notifyWaitlist(bot *tgbotapi.BotAPI, db Repository, eventID int) {
+	// Check if event is still active (not past)
+	event, err := db.GetLatestEvent()
+	if err != nil || event == nil || event.id != eventID {
+		// Event is no longer active, don't notify
 		return
 	}
-	email := strings.TrimSpace(args)
-	if err := db.UpdateUserEmail(msg.From.ID, email); err != nil {
-		sendMessage(bot, msg.Chat.ID, "Ошибка обновления email.")
+
+	// Get all users in waitlist
+	waitlist, err := db.GetWaitlistForEvent(eventID)
+	if err != nil || len(waitlist) == 0 {
 		return
 	}
-	sendMessage(bot, msg.Chat.ID, "Email успешно обновлён!")
+
+	// Send notification to all users in waitlist
+	bookButton := tgbotapi.NewInlineKeyboardButtonData("Забронировать", "waitlist_book")
+	declineButton := tgbotapi.NewInlineKeyboardButtonData("Нет", "waitlist_decline")
+	row := tgbotapi.NewInlineKeyboardRow(bookButton, declineButton)
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(row)
+
+	for _, entry := range waitlist {
+		message := tgbotapi.NewMessage(entry.ChatID, "Есть свободное место! Хотите забронировать?")
+		message.ReplyMarkup = keyboard
+		bot.Send(message)
+	}
 }
 
 // handleAddEvent handles the /addevent command.
@@ -426,4 +769,49 @@ func handleQRCode(bot *tgbotapi.BotAPI, db Repository, msg *tgbotapi.Message) {
 	photo.Caption = "QR-код для отметки о посещении"
 	bot.Send(photo)
 	os.Remove(qrFile)
+}
+
+// handleRemoveUser handles the /remove command.
+// Removes a user from the current event by username. Admin only.
+func handleRemoveUser(bot *tgbotapi.BotAPI, db Repository, msg *tgbotapi.Message) {
+	username := strings.TrimSpace(msg.CommandArguments())
+	if username == "" {
+		sendMessage(bot, msg.Chat.ID, "Использование: /remove username")
+		return
+	}
+
+	// Remove @ if provided
+	username = strings.TrimPrefix(username, "@")
+
+	event, err := db.GetLatestEvent()
+	if err != nil {
+		sendMessage(bot, msg.Chat.ID, "Ошибка получения информации о событии")
+		return
+	}
+	if event == nil {
+		sendMessage(bot, msg.Chat.ID, "Нет активного события")
+		return
+	}
+
+	wasRegistered, err := db.RemoveUserByUsername(username, event.id)
+	if err != nil {
+		sendMessage(bot, msg.Chat.ID, "Ошибка удаления пользователя: "+err.Error())
+		return
+	}
+
+	if !wasRegistered {
+		sendMessage(bot, msg.Chat.ID, "Пользователь @"+username+" не найден в регистрациях")
+		return
+	}
+
+	// Decrement registration count
+	if err := db.DecrementEventRegistrationCount(event.id); err != nil {
+		sendMessage(bot, msg.Chat.ID, "Ошибка обновления количества регистраций")
+		return
+	}
+
+	sendMessage(bot, msg.Chat.ID, "Пользователь @"+username+" удалён из регистраций")
+
+	// Notify waitlist
+	notifyWaitlist(bot, db, event.id)
 }

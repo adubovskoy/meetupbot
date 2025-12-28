@@ -29,3 +29,12 @@ type UserRegistrationWithEvent struct {
 	EventName        string    // Name of the event
 	EventDate        time.Time // Date of the event
 }
+
+// WaitlistEntry represents a user in the waitlist for an event.
+type WaitlistEntry struct {
+	TelegramID int       // TelegramID is the unique identifier for the user on Telegram.
+	ChatID     int64     // ChatID is the chat ID for sending proactive messages.
+	Username   string    // Username is the user's Telegram username.
+	EventID    int       // EventID is the identifier of the event.
+	JoinedDate time.Time // JoinedDate is when the user joined the waitlist.
+}
