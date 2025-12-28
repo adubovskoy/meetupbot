@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Meetup Bot - Telegram Event Registration Bot</title>
+    <style>
+        :root {
+            --primary-color: #0088cc;
+            --secondary-color: #005580;
+            --bg-color: #f5f5f5;
+            --text-color: #333;
+            --card-bg: #ffffff;
+            --code-bg: #2d2d2d;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            line-height: 1.6;
+            color: var(--text-color);
+            background-color: var(--bg-color);
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 20px;
+        }
+
+        /* Header */
+        header {
+            background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+            color: white;
+            padding: 60px 0;
+            text-align: center;
+        }
+
+        header h1 {
+            font-size: 3rem;
+            margin-bottom: 20px;
+        }
+
+        header p {
+            font-size: 1.3rem;
+            opacity: 0.9;
+            max-width: 600px;
+            margin: 0 auto;
+        }
+
+        .header-buttons {
+            margin-top: 30px;
+        }
+
+        .btn {
+            display: inline-block;
+            padding: 12px 30px;
+            margin: 5px;
+            border-radius: 30px;
+            text-decoration: none;
+            font-weight: 600;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(0,0,0,0.2);
+        }
+
+        .btn-primary {
+            background-color: white;
+            color: var(--primary-color);
+        }
+
+        .btn-secondary {
+            background-color: transparent;
+            color: white;
+            border: 2px solid white;
+        }
+
+        /* Features Section */
+        .features {
+            padding: 80px 0;
+        }
+
+        .features h2 {
+            text-align: center;
+            font-size: 2.5rem;
+            margin-bottom: 50px;
+            color: var(--secondary-color);
+        }
+
+        .features-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 30px;
+        }
+
+        .feature-card {
+            background: var(--card-bg);
+            padding: 30px;
+            border-radius: 15px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.08);
+            transition: transform 0.3s;
+        }
+
+        .feature-card:hover {
+            transform: translateY(-5px);
+        }
+
+        .feature-icon {
+            font-size: 2.5rem;
+            margin-bottom: 15px;
+        }
+
+        .feature-card h3 {
+            font-size: 1.3rem;
+            margin-bottom: 10px;
+            color: var(--secondary-color);
+        }
+
+        /* Commands Section */
+        .commands {
+            background-color: var(--card-bg);
+            padding: 80px 0;
+        }
+
+        .commands h2 {
+            text-align: center;
+            font-size: 2.5rem;
+            margin-bottom: 50px;
+            color: var(--secondary-color);
+        }
+
+        .commands-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 40px;
+        }
+
+        .command-group h3 {
+            font-size: 1.5rem;
+            margin-bottom: 20px;
+            color: var(--primary-color);
+            border-bottom: 2px solid var(--primary-color);
+            padding-bottom: 10px;
+        }
+
+        .command {
+            margin-bottom: 15px;
+            padding: 15px;
+            background-color: var(--bg-color);
+            border-radius: 8px;
+        }
+
+        .command code {
+            background-color: var(--code-bg);
+            color: #f8f8f2;
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-family: 'Fira Code', monospace;
+        }
+
+        .command p {
+            margin-top: 8px;
+            color: #666;
+        }
+
+        /* How It Works */
+        .how-it-works {
+            padding: 80px 0;
+        }
+
+        .how-it-works h2 {
+            text-align: center;
+            font-size: 2.5rem;
+            margin-bottom: 50px;
+            color: var(--secondary-color);
+        }
+
+        .steps {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 30px;
+        }
+
+        .step {
+            flex: 1;
+            min-width: 250px;
+            max-width: 300px;
+            text-align: center;
+            padding: 30px;
+        }
+
+        .step-number {
+            width: 60px;
+            height: 60px;
+            background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+            color: white;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5rem;
+            font-weight: bold;
+            margin: 0 auto 20px;
+        }
+
+        .step h3 {
+            margin-bottom: 10px;
+            color: var(--secondary-color);
+        }
+
+        /* Installation */
+        .installation {
+            background-color: var(--code-bg);
+            color: #f8f8f2;
+            padding: 80px 0;
+        }
+
+        .installation h2 {
+            text-align: center;
+            font-size: 2.5rem;
+            margin-bottom: 50px;
+        }
+
+        .code-block {
+            background-color: #1a1a1a;
+            border-radius: 10px;
+            padding: 30px;
+            overflow-x: auto;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+
+        .code-block pre {
+            font-family: 'Fira Code', monospace;
+            font-size: 0.95rem;
+            line-height: 1.8;
+        }
+
+        .code-comment {
+            color: #6a9955;
+        }
+
+        .code-command {
+            color: #dcdcaa;
+        }
+
+        /* Footer */
+        footer {
+            background-color: var(--secondary-color);
+            color: white;
+            padding: 40px 0;
+            text-align: center;
+        }
+
+        footer a {
+            color: white;
+            text-decoration: none;
+        }
+
+        footer a:hover {
+            text-decoration: underline;
+        }
+
+        .footer-links {
+            margin-top: 20px;
+        }
+
+        .footer-links a {
+            margin: 0 15px;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            header h1 {
+                font-size: 2rem;
+            }
+
+            header p {
+                font-size: 1rem;
+            }
+
+            .features h2,
+            .commands h2,
+            .how-it-works h2,
+            .installation h2 {
+                font-size: 1.8rem;
+            }
+
+            .commands-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="container">
+            <h1>Meetup Bot</h1>
+            <p>A powerful Telegram bot for managing event registrations, attendance tracking, and waitlist management</p>
+            <div class="header-buttons">
+                <a href="https://github.com/adubovskoy/meetupbot" class="btn btn-primary">View on GitHub</a>
+                <a href="#installation" class="btn btn-secondary">Get Started</a>
+            </div>
+        </div>
+    </header>
+
+    <section class="features">
+        <div class="container">
+            <h2>Features</h2>
+            <div class="features-grid">
+                <div class="feature-card">
+                    <div class="feature-icon">📝</div>
+                    <h3>Easy Registration</h3>
+                    <p>Users can register for events with just a few taps. Collect names and emails with configurable mandatory fields.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">📊</div>
+                    <h3>Capacity Management</h3>
+                    <p>Set event capacity limits and track registration counts in real-time. Never worry about overbooking again.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">⏳</div>
+                    <h3>Waitlist Support</h3>
+                    <p>When events are full, users can join a waitlist and get notified automatically when spots become available.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">📱</div>
+                    <h3>QR Code Check-in</h3>
+                    <p>Generate QR codes for events. Attendees scan to check in, making attendance tracking effortless.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">📤</div>
+                    <h3>CSV Export</h3>
+                    <p>Export all registration data to CSV format for further analysis or record-keeping.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">🔐</div>
+                    <h3>Admin Controls</h3>
+                    <p>Secure admin commands for event management, user removal, and data export.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="commands">
+        <div class="container">
+            <h2>Bot Commands</h2>
+            <div class="commands-grid">
+                <div class="command-group">
+                    <h3>User Commands</h3>
+                    <div class="command">
+                        <code>/start</code>
+                        <p>Start the bot and see registration options for the current event</p>
+                    </div>
+                    <div class="command">
+                        <code>/state</code>
+                        <p>Check your registration status and see available spots</p>
+                    </div>
+                </div>
+                <div class="command-group">
+                    <h3>Admin Commands</h3>
+                    <div class="command">
+                        <code>/addevent Name;YYYY-MM-DD;Capacity</code>
+                        <p>Create a new event with name, date, and capacity limit</p>
+                    </div>
+                    <div class="command">
+                        <code>/qrcode</code>
+                        <p>Generate a QR code for event check-in</p>
+                    </div>
+                    <div class="command">
+                        <code>/export</code>
+                        <p>Download registration data as CSV file</p>
+                    </div>
+                    <div class="command">
+                        <code>/remove @username</code>
+                        <p>Remove a user from all registrations</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="how-it-works">
+        <div class="container">
+            <h2>How It Works</h2>
+            <div class="steps">
+                <div class="step">
+                    <div class="step-number">1</div>
+                    <h3>Create Event</h3>
+                    <p>Admin creates an event with name, date, and capacity using the /addevent command</p>
+                </div>
+                <div class="step">
+                    <div class="step-number">2</div>
+                    <h3>Users Register</h3>
+                    <p>Users send /start to the bot and tap the register button to sign up</p>
+                </div>
+                <div class="step">
+                    <div class="step-number">3</div>
+                    <h3>Check-in</h3>
+                    <p>At the event, attendees scan the QR code to mark their attendance</p>
+                </div>
+                <div class="step">
+                    <div class="step-number">4</div>
+                    <h3>Export Data</h3>
+                    <p>Admin exports registration and attendance data for records</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="installation" id="installation">
+        <div class="container">
+            <h2>Installation</h2>
+            <div class="code-block">
+                <pre><span class="code-comment"># Clone the repository</span>
+<span class="code-command">git clone https://github.com/adubovskoy/meetupbot.git</span>
+<span class="code-command">cd meetupbot</span>
+
+<span class="code-comment"># Configure the bot</span>
+<span class="code-command">cp .env.example .env</span>
+<span class="code-command">nano .env</span>  <span class="code-comment"># Add your BOT_TOKEN and ADMIN_USERS</span>
+
+<span class="code-comment"># Build and run</span>
+<span class="code-command">go build</span>
+<span class="code-command">./meetupbot</span>
+
+<span class="code-comment"># Alternative: pass config via command line</span>
+<span class="code-command">BOT_TOKEN=your_token ADMIN_USERS=admin1,admin2 ./meetupbot</span></pre>
+            </div>
+        </div>
+    </section>
+
+    <footer>
+        <div class="container">
+            <p>Meetup Bot - Open Source Telegram Event Registration Bot</p>
+            <div class="footer-links">
+                <a href="https://github.com/adubovskoy/meetupbot">GitHub</a>
+                <a href="https://github.com/adubovskoy/meetupbot/issues">Issues</a>
+                <a href="https://github.com/adubovskoy/meetupbot/blob/master/LICENSE">MIT License</a>
+            </div>
+        </div>
+    </footer>
+</body>
+</html>

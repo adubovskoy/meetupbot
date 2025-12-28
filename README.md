@@ -45,6 +45,11 @@ A Telegram bot for managing event registrations and attendance tracking. This bo
    ./meetupbot
    ```
 
+   **Alternative:** You can also pass configuration via environment variables directly:
+   ```bash
+   BOT_TOKEN=your_token ADMIN_USERS=admin1,admin2 MANDATORY_FIELDS=name,email ./meetupbot
+   ```
+
 ## Configuration
 
 The bot uses a `.env` file for configuration. Create a `.env` file in the project root with the following options:
