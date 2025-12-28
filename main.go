@@ -81,6 +81,10 @@ func main() {
 				// Handle dialog based on state
 				handleDialog(bot, repo, update.Message, dialogState, eventID)
 			} else if update.Message.IsCommand() {
+				// If user is in a dialog and sends a command, cancel the dialog and remove incomplete registration
+				if dialogState != NoDialog {
+					handleDialogCancel(bot, repo, update.Message, eventID)
+				}
 				handleCommand(bot, repo, update.Message)
 			} else {
 				// No dialog mode: show appropriate button based on registration status

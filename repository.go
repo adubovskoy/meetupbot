@@ -22,6 +22,13 @@ type Repository interface {
 	GetAllRegistrations() ([]UserRegistrationWithEvent, error)
 	HasUserInfo(telegramID int) (bool, string, string, error)
 	UpdateUserName(telegramID int, name string) error
+	// Waitlist methods
+	AddToWaitlist(telegramID int, chatID int64, username string, eventID int) error
+	RemoveFromWaitlist(telegramID int, eventID int) error
+	GetWaitlistForEvent(eventID int) ([]WaitlistEntry, error)
+	IsUserInWaitlist(telegramID int, eventID int) (bool, error)
+	// Admin methods
+	RemoveUserByUsername(username string, eventID int) (bool, error)
 	// Add method for SQL statement preparation
 	Prepare(query string) (*sql.Stmt, error)
 	Exec(query string, args ...interface{}) (sql.Result, error)
@@ -60,10 +67,23 @@ func (r *SQLiteRepository) CreateTables() error {
 		state TEXT DEFAULT 'active'
 	);`
 
+	waitlistTable := `CREATE TABLE IF NOT EXISTS waitlist (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		telegram_id INTEGER,
+		chat_id INTEGER,
+		username TEXT,
+		event_id INTEGER,
+		joined_date DATETIME,
+		UNIQUE(telegram_id, event_id)
+	);`
+
 	if _, err := r.db.Exec(userTable); err != nil {
 		return err
 	}
 	if _, err := r.db.Exec(eventTable); err != nil {
+		return err
+	}
+	if _, err := r.db.Exec(waitlistTable); err != nil {
 		return err
 	}
 	return nil
@@ -327,4 +347,88 @@ func (r *SQLiteRepository) GetAllRegistrations() ([]UserRegistrationWithEvent, e
 	}
 
 	return registrations, nil
+}
+
+// AddToWaitlist adds a user to the waitlist for an event
+func (r *SQLiteRepository) AddToWaitlist(telegramID int, chatID int64, username string, eventID int) error {
+	stmt, err := r.db.Prepare("INSERT OR REPLACE INTO waitlist (telegram_id, chat_id, username, event_id, joined_date) VALUES (?, ?, ?, ?, ?)")
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	_, err = stmt.Exec(telegramID, chatID, username, eventID, time.Now().Format(time.RFC3339))
+	return err
+}
+
+// RemoveFromWaitlist removes a user from the waitlist for an event
+func (r *SQLiteRepository) RemoveFromWaitlist(telegramID int, eventID int) error {
+	stmt, err := r.db.Prepare("DELETE FROM waitlist WHERE telegram_id = ? AND event_id = ?")
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	_, err = stmt.Exec(telegramID, eventID)
+	return err
+}
+
+// GetWaitlistForEvent returns all users in the waitlist for an event
+func (r *SQLiteRepository) GetWaitlistForEvent(eventID int) ([]WaitlistEntry, error) {
+	rows, err := r.db.Query("SELECT telegram_id, chat_id, username, event_id, joined_date FROM waitlist WHERE event_id = ? ORDER BY joined_date ASC", eventID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var entries []WaitlistEntry
+	for rows.Next() {
+		var entry WaitlistEntry
+		var dateStr string
+		err := rows.Scan(&entry.TelegramID, &entry.ChatID, &entry.Username, &entry.EventID, &dateStr)
+		if err != nil {
+			return nil, err
+		}
+		entry.JoinedDate, _ = time.Parse(time.RFC3339, dateStr)
+		entries = append(entries, entry)
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return entries, nil
+}
+
+// IsUserInWaitlist checks if a user is in the waitlist for an event
+func (r *SQLiteRepository) IsUserInWaitlist(telegramID int, eventID int) (bool, error) {
+	var count int
+	err := r.db.QueryRow("SELECT COUNT(*) FROM waitlist WHERE telegram_id = ? AND event_id = ?", telegramID, eventID).Scan(&count)
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+// RemoveUserByUsername removes a user from all tables by username and returns if was registered
+func (r *SQLiteRepository) RemoveUserByUsername(username string, eventID int) (bool, error) {
+	// First check if user exists and is registered
+	var registred int
+	err := r.db.QueryRow("SELECT registred FROM users WHERE username = ? AND event_id = ?", username, eventID).Scan(&registred)
+	if err != nil && err != sql.ErrNoRows {
+		return false, err
+	}
+	wasRegistered := err == nil && registred == 1
+
+	// Delete from users table
+	_, err = r.db.Exec("DELETE FROM users WHERE username = ?", username)
+	if err != nil {
+		return false, err
+	}
+
+	// Delete from waitlist table
+	_, err = r.db.Exec("DELETE FROM waitlist WHERE username = ?", username)
+	if err != nil {
+		return false, err
+	}
+
+	return wasRegistered, nil
 }
